@@ -127,7 +127,7 @@ def visualize_matches(image1, image2):
     plt.show()
 
 
-image_files = ["轮毂001B1.png", "轮毂001B.png", "轮毂001A.png"]
+image_files = ["轮毂001B1.png", "005B.png", "005A.png"]
 num_images = len(image_files)
 
 preprocessed_images = []
