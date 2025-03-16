@@ -27,7 +27,7 @@ def generate_mask(corrected_image, num_clusters=2):
     pixels = np.float32(pixels)
 
     # 定义 K - Means 算法的终止条件
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.95)
 
     # 应用 K - Means 算法
     _, labels, centers = cv2.kmeans(pixels, num_clusters, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
@@ -50,35 +50,47 @@ def generate_mask(corrected_image, num_clusters=2):
     return mask
 
 
-# 去除小面积区域
-def remove_small_areas(mask, min_area_threshold=40):
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    new_mask = mask.copy()
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < min_area_threshold:
-            cv2.drawContours(new_mask, [contour], -1, 0, -1)
-    return new_mask
+def process_image_after_clustering(image):
+    height, width = image.shape
 
+    # 遍历可能的旋转角度（比如0 - 360度，步长可根据需要调整）
+    best_match_score = -float('inf')
+    best_rotated_img = None
+    angle = 0
+    best_angle = 0
+    for angle in range(10, 300, 1):
+        M = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1)
+        rotated_img = cv2.warpAffine(image, M, (width, height))
+        # 使用模板匹配衡量旋转后图像与原图像的相似性
+        result = cv2.matchTemplate(image, rotated_img, cv2.TM_CCOEFF_NORMED)
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+        if max_val > best_match_score:
+            best_angle = angle
+            best_match_score = max_val
+            best_rotated_img = rotated_img
 
-# 进行开运算和闭运算使黑色直线连续
-def make_lines_continuous(mask):
-    # 先进行开运算去除小噪声
-    kernel_open = np.ones((2, 2), np.uint8)
-    opened_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
+    print('Best match score:', best_match_score)
+    print('Best angle:', best_angle)
 
-    # 再进行闭运算连接辐条
-    kernel_close = np.ones((2, 2), np.uint8)
-    closed_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel_close)
+    # 实现类似交集操作
+    intersection_img = np.zeros_like(image)
+    for y in range(height):
+        for x in range(width):
+            if image[y, x] != 0 and best_rotated_img[y, x] != 0:
+                intersection_img[y, x] = min(image[y, x], best_rotated_img[y, x])
 
-    return closed_mask
+    # 进行开运算（先膨胀后腐蚀）
+    kernel = np.ones((2, 2), np.uint8)
+    opening_img = cv2.morphologyEx(intersection_img.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+
+    return opening_img, best_rotated_img, best_angle
 
 
 def calculate_similarity(image_path1, image_path2):
     # 读取图像
     image1 = cv2.imread(image_path1, 0)
     image2 = cv2.imread(image_path2, 0)
-    size = 150
+    size = 80
     # 调整图像大小
     image1 = cv2.resize(image1, (size, size), interpolation=cv2.INTER_CUBIC)
     image2 = cv2.resize(image2, (size, size), interpolation=cv2.INTER_CUBIC)
@@ -91,36 +103,34 @@ def calculate_similarity(image_path1, image_path2):
     mask1 = generate_mask(corrected_image1)
     mask2 = generate_mask(corrected_image2)
 
-    # 去除小面积区域
-    mask1 = remove_small_areas(mask1)
-    mask2 = remove_small_areas(mask2)
-
-    # 使黑色直线连续
-    mask1 = make_lines_continuous(mask1)
-    mask2 = make_lines_continuous(mask2)
+    # 对每个掩码进行聚类后的处理
+    opening_mask1, rotated_mask1, angle1 = process_image_after_clustering(mask1)
+    opening_mask2, rotated_mask2, angle2 = process_image_after_clustering(mask2)
 
     # 考虑旋转对称，尝试不同旋转角度
     height, width = mask2.shape
     center = (width // 2, height // 2)
     max_similarity = -1
     best_angle = 0
-    best_rotated_mask2 = mask2.copy()
+    best_rotated_mask2 = opening_mask2.copy()
     for angle in range(0, 360, 1):  # 以 1 度为步长旋转
         rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1)
-        rotated_mask2 = cv2.warpAffine(mask2, rotation_matrix, (width, height))
+        rotated_mask2 = cv2.warpAffine(opening_mask2, rotation_matrix, (width, height))
 
         # 使用 SSIM 计算相似度
-        similarity = ssim(mask1, rotated_mask2)
+        similarity = ssim(opening_mask1, rotated_mask2)
         if similarity > max_similarity:
             max_similarity = similarity
             best_angle = angle
             best_rotated_mask2 = rotated_mask2
 
-    return max_similarity, best_angle, mask1, mask2, best_rotated_mask2
+    return max_similarity, best_angle, opening_mask1, opening_mask2, best_rotated_mask2
 
 
 # 图片对列表
 image_pairs = [
+    # ('007A.png', '007A1.png'),
+    # ('010A.png', '010A1.png'),
     ('011A.png', '011A1.png'),
     ('012A.png', '012A1.png'),
     ('007A.png', '007A.png'),
@@ -138,21 +148,21 @@ image_pairs = [
 for pair in image_pairs:
     image_path1, image_path2 = pair
     # 计算相似度、最佳旋转角度，获取掩码和旋转后的掩码
-    similarity, best_angle, mask1, mask2, rotated_mask2 = calculate_similarity(image_path1, image_path2)
+    similarity, best_angle, opening_mask1, opening_mask2, rotated_mask2 = calculate_similarity(image_path1, image_path2)
 
     print(f"图片 {image_path1} 和 {image_path2} 的相似度为: {similarity}")
     print(f"最佳旋转角度为: {best_angle} 度")
 
-    # 显示第一个图的 mask、第二个图的 mask 和第二个图旋转之后的 mask
+    # 显示第一个图开运算后的 mask、第二个图开运算后的 mask 和第二个图旋转之后的 mask
     plt.figure(figsize=(15, 5))
     plt.subplot(131)
-    plt.imshow(mask1, cmap='gray')
-    plt.title('第一个图的 Mask')
+    plt.imshow(opening_mask1, cmap='gray')
+    plt.title('第一个图开运算后的 Mask')
     plt.axis('off')
 
     plt.subplot(132)
-    plt.imshow(mask2, cmap='gray')
-    plt.title('第二个图的 Mask')
+    plt.imshow(opening_mask2, cmap='gray')
+    plt.title('第二个图开运算后的 Mask')
     plt.axis('off')
 
     plt.subplot(133)

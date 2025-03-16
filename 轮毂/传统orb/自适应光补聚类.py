@@ -27,7 +27,7 @@ def generate_mask(corrected_image, num_clusters=2):
     pixels = np.float32(pixels)
 
     # 定义 K - Means 算法的终止条件
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.95)
 
     # 应用 K - Means 算法
     _, labels, centers = cv2.kmeans(pixels, num_clusters, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)

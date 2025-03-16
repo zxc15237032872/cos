@@ -50,35 +50,28 @@ def generate_mask(corrected_image, num_clusters=2):
     return mask
 
 
-# 去除小面积区域
-def remove_small_areas(mask, min_area_threshold=40):
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    new_mask = mask.copy()
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < min_area_threshold:
-            cv2.drawContours(new_mask, [contour], -1, 0, -1)
-    return new_mask
+def jaccard_similarity(mask1, mask2):
+    # 将二值图转换为布尔类型数组
+    mask1_bool = mask1.astype(bool)
+    mask2_bool = mask2.astype(bool)
 
+    # 计算交集和并集的元素数量
+    intersection = np.logical_and(mask1_bool, mask2_bool).sum()
+    union = np.logical_or(mask1_bool, mask2_bool).sum()
 
-# 进行开运算和闭运算使黑色直线连续
-def make_lines_continuous(mask):
-    # 先进行开运算去除小噪声
-    kernel_open = np.ones((2, 2), np.uint8)
-    opened_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
+    # 计算杰卡德相似系数
+    if union == 0:
+        return 0
+    jaccard = intersection / union
 
-    # 再进行闭运算连接辐条
-    kernel_close = np.ones((2, 2), np.uint8)
-    closed_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel_close)
-
-    return closed_mask
+    return jaccard * 100
 
 
 def calculate_similarity(image_path1, image_path2):
     # 读取图像
     image1 = cv2.imread(image_path1, 0)
     image2 = cv2.imread(image_path2, 0)
-    size = 150
+    size = 100
     # 调整图像大小
     image1 = cv2.resize(image1, (size, size), interpolation=cv2.INTER_CUBIC)
     image2 = cv2.resize(image2, (size, size), interpolation=cv2.INTER_CUBIC)
@@ -91,18 +84,10 @@ def calculate_similarity(image_path1, image_path2):
     mask1 = generate_mask(corrected_image1)
     mask2 = generate_mask(corrected_image2)
 
-    # 去除小面积区域
-    mask1 = remove_small_areas(mask1)
-    mask2 = remove_small_areas(mask2)
-
-    # 使黑色直线连续
-    mask1 = make_lines_continuous(mask1)
-    mask2 = make_lines_continuous(mask2)
-
     # 考虑旋转对称，尝试不同旋转角度
     height, width = mask2.shape
     center = (width // 2, height // 2)
-    max_similarity = -1
+    max_similarity_ssim = -1
     best_angle = 0
     best_rotated_mask2 = mask2.copy()
     for angle in range(0, 360, 1):  # 以 1 度为步长旋转
@@ -110,14 +95,61 @@ def calculate_similarity(image_path1, image_path2):
         rotated_mask2 = cv2.warpAffine(mask2, rotation_matrix, (width, height))
 
         # 使用 SSIM 计算相似度
-        similarity = ssim(mask1, rotated_mask2)
-        if similarity > max_similarity:
-            max_similarity = similarity
+        similarity_ssim = ssim(mask1, rotated_mask2)
+        if similarity_ssim > max_similarity_ssim:
+            max_similarity_ssim = similarity_ssim
             best_angle = angle
             best_rotated_mask2 = rotated_mask2
 
-    return max_similarity, best_angle, mask1, mask2, best_rotated_mask2
+    # 计算旋转后掩码的杰卡德相似系数
+    jaccard_similarity_percentage = jaccard_similarity(mask1, best_rotated_mask2)
 
+    return jaccard_similarity_percentage, best_angle, mask1, mask2, best_rotated_mask2
+
+
+def visualize_second_largest_contour(image_path):
+    # 读取图像
+    image = cv2.imread(image_path, 0)
+    size = 100
+    # 调整图像大小
+    image = cv2.resize(image, (size, size), interpolation=cv2.INTER_CUBIC)
+
+    # 光照补偿
+    corrected_image = illumination_compensation(image)
+
+    # 生成掩码
+    mask = generate_mask(corrected_image)
+
+    # 查找轮廓
+    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # 计算每个轮廓的面积
+    areas = [cv2.contourArea(contour) for contour in contours]
+
+    # 对面积进行排序
+    sorted_indices = np.argsort(areas)[::-1]
+
+    # 确保有至少两个轮廓
+    if len(sorted_indices) >= 2:
+        # 获取面积第二大的轮廓的索引
+        second_largest_index = sorted_indices[0]
+        second_largest_contour = contours[second_largest_index]
+
+        # 创建一个空白图像用于绘制轮廓
+        contour_image = np.zeros_like(mask)
+        cv2.drawContours(contour_image, [second_largest_contour], -1, 255, 2)
+
+        # 显示结果
+        plt.imshow(contour_image, cmap='gray')
+        plt.title('面积第二大的轮廓')
+        plt.axis('off')
+        plt.show()
+    else:
+        print("图像中没有足够的轮廓来找到面积第二大的轮廓。")
+
+
+# 调用函数可视化 005A.png 的面积第二大的轮廓
+visualize_second_largest_contour('005A.png')
 
 # 图片对列表
 image_pairs = [
@@ -138,9 +170,9 @@ image_pairs = [
 for pair in image_pairs:
     image_path1, image_path2 = pair
     # 计算相似度、最佳旋转角度，获取掩码和旋转后的掩码
-    similarity, best_angle, mask1, mask2, rotated_mask2 = calculate_similarity(image_path1, image_path2)
+    similarity_percentage, best_angle, mask1, mask2, rotated_mask2 = calculate_similarity(image_path1, image_path2)
 
-    print(f"图片 {image_path1} 和 {image_path2} 的相似度为: {similarity}")
+    print(f"图片 {image_path1} 和 {image_path2} 的相似度为: {similarity_percentage:.2f}%")
     print(f"最佳旋转角度为: {best_angle} 度")
 
     # 显示第一个图的 mask、第二个图的 mask 和第二个图旋转之后的 mask
@@ -160,4 +192,4 @@ for pair in image_pairs:
     plt.title('第二个图旋转后的 Mask')
     plt.axis('off')
 
-    plt.show()
+    # plt.show()

@@ -50,35 +50,11 @@ def generate_mask(corrected_image, num_clusters=2):
     return mask
 
 
-# 去除小面积区域
-def remove_small_areas(mask, min_area_threshold=40):
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    new_mask = mask.copy()
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < min_area_threshold:
-            cv2.drawContours(new_mask, [contour], -1, 0, -1)
-    return new_mask
-
-
-# 进行开运算和闭运算使黑色直线连续
-def make_lines_continuous(mask):
-    # 先进行开运算去除小噪声
-    kernel_open = np.ones((2, 2), np.uint8)
-    opened_mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_open)
-
-    # 再进行闭运算连接辐条
-    kernel_close = np.ones((2, 2), np.uint8)
-    closed_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel_close)
-
-    return closed_mask
-
-
 def calculate_similarity(image_path1, image_path2):
     # 读取图像
     image1 = cv2.imread(image_path1, 0)
     image2 = cv2.imread(image_path2, 0)
-    size = 150
+    size = 80
     # 调整图像大小
     image1 = cv2.resize(image1, (size, size), interpolation=cv2.INTER_CUBIC)
     image2 = cv2.resize(image2, (size, size), interpolation=cv2.INTER_CUBIC)
@@ -91,32 +67,49 @@ def calculate_similarity(image_path1, image_path2):
     mask1 = generate_mask(corrected_image1)
     mask2 = generate_mask(corrected_image2)
 
-    # 去除小面积区域
-    mask1 = remove_small_areas(mask1)
-    mask2 = remove_small_areas(mask2)
-
-    # 使黑色直线连续
-    mask1 = make_lines_continuous(mask1)
-    mask2 = make_lines_continuous(mask2)
-
     # 考虑旋转对称，尝试不同旋转角度
     height, width = mask2.shape
     center = (width // 2, height // 2)
-    max_similarity = -1
+    max_similarity_ssim = -1
     best_angle = 0
     best_rotated_mask2 = mask2.copy()
-    for angle in range(0, 360, 1):  # 以 1 度为步长旋转
+    for angle in range(0, 360, 1):
         rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1)
         rotated_mask2 = cv2.warpAffine(mask2, rotation_matrix, (width, height))
 
         # 使用 SSIM 计算相似度
-        similarity = ssim(mask1, rotated_mask2)
-        if similarity > max_similarity:
-            max_similarity = similarity
+        similarity_ssim = ssim(mask1, rotated_mask2)
+        if similarity_ssim > max_similarity_ssim:
+            max_similarity_ssim = similarity_ssim
             best_angle = angle
             best_rotated_mask2 = rotated_mask2
 
-    return max_similarity, best_angle, mask1, mask2, best_rotated_mask2
+    # 提取前景像素点
+    points1 = np.argwhere(mask1 > 0)
+    points2 = np.argwhere(best_rotated_mask2 > 0)
+
+    # 调整点集的列顺序，从 (y, x) 变为 (x, y)
+    points1 = points1[:, ::-1]
+    points2 = points2[:, ::-1]
+
+    # 确保点集的数据类型为 np.float32
+    points1 = points1.astype(np.float32)
+    points2 = points2.astype(np.float32)
+    print("Points1 type:", points1.dtype)
+    print("Points1 shape:", points1.shape)
+    print("Points2 type:", points2.dtype)
+    print("Points2 shape:", points2.shape)
+
+    # 计算 Hausdorff 距离
+    hausdorff_distance = cv2.createHausdorffDistanceExtractor()
+    distance = hausdorff_distance.computeDistance(points1, points2)
+
+    # 将 Hausdorff 距离转换为相似度百分比
+    reference_distance = 6400
+    similarity_hausdorff = (1 - distance / reference_distance) * 100
+    similarity_hausdorff = max(0, similarity_hausdorff)  # 确保相似度不小于 0
+
+    return max_similarity_ssim, similarity_hausdorff, best_angle, mask1, mask2, best_rotated_mask2
 
 
 # 图片对列表
@@ -138,9 +131,10 @@ image_pairs = [
 for pair in image_pairs:
     image_path1, image_path2 = pair
     # 计算相似度、最佳旋转角度，获取掩码和旋转后的掩码
-    similarity, best_angle, mask1, mask2, rotated_mask2 = calculate_similarity(image_path1, image_path2)
+    similarity_ssim, similarity_hausdorff, best_angle, mask1, mask2, rotated_mask2 = calculate_similarity(image_path1, image_path2)
 
-    print(f"图片 {image_path1} 和 {image_path2} 的相似度为: {similarity}")
+    print(f"图片 {image_path1} 和 {image_path2} 的 SSIM 相似度为: {similarity_ssim}")
+    print(f"图片 {image_path1} 和 {image_path2} 的 Hausdorff 相似度为: {similarity_hausdorff:.2f}%")
     print(f"最佳旋转角度为: {best_angle} 度")
 
     # 显示第一个图的 mask、第二个图的 mask 和第二个图旋转之后的 mask
