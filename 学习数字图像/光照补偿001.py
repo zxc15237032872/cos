@@ -63,7 +63,7 @@ def illumination_compensation(image):
 
 
 # 读取图像
-image = cv2.imread('005B.png', 0)  # 以灰度模式读取图像
+image = cv2.imread('005A.png', 0)  # 以灰度模式读取图像
 
 # 调用光照补偿函数
 corrected_image = illumination_compensation(image)

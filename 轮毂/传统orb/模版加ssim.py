@@ -15,7 +15,7 @@ matplotlib.use('TkAgg')
 
 def illumination_compensation(image):
     # 创建 CLAHE 对象
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(9, 9))
     # 应用 CLAHE 进行自适应直方图均衡化
     corrected_image = clahe.apply(image)
     return corrected_image
@@ -105,7 +105,10 @@ def calculate_similarity(image_path1, image_path2):
 
     # 对每个掩码进行聚类后的处理
     opening_mask1, rotated_mask1, angle1 = process_image_after_clustering(mask1)
+    opening_mask1, rotated_mask1, angle1 = process_image_after_clustering(opening_mask1)
+
     opening_mask2, rotated_mask2, angle2 = process_image_after_clustering(mask2)
+    opening_mask2, rotated_mask2, angle2 = process_image_after_clustering(opening_mask2)
 
     # 考虑旋转对称，尝试不同旋转角度
     height, width = mask2.shape
@@ -142,11 +145,11 @@ image_pairs = [
     ('007A.png', '007A.png'),
     ('006A.png', '006A1.png'),
     ('009A.png', '009B.png'),
-    ('005A.png', '004A1.png'),
+    ('005A.png', '009A.png'),
     ('006A.png', '005A.png'),
     ('005A.png', '005B.png'),
     ('006A.png', '004A1.png'),
-    ('004A.png', '005A.png'),
+    ('009A.png', '005A.png'),
     ('005A.png', '006A.png')
 ]
 
@@ -162,20 +165,20 @@ for pair in image_pairs:
     print(f"图片 {image_path1} 和 {image_path2} 的模板匹配分数为: {template_match_score}")
 
     # 显示第一个图开运算后的 mask、第二个图开运算后的 mask 和第二个图旋转之后的 mask
-    plt.figure(figsize=(15, 5))
+    plt.figure(figsize=(9, 3))
     plt.subplot(131)
     plt.imshow(opening_mask1, cmap='gray')
-    plt.title('第一个图开运算后的 Mask')
+    plt.title(image_path1+'的 Mask')
     plt.axis('off')
 
     plt.subplot(132)
     plt.imshow(opening_mask2, cmap='gray')
-    plt.title('第二个图开运算后的 Mask')
+    plt.title(image_path1+'的 Mask')
     plt.axis('off')
 
     plt.subplot(133)
     plt.imshow(rotated_mask2, cmap='gray')
-    plt.title('第二个图旋转后的 Mask')
+    plt.title(image_path2+'旋转后的 Mask')
     plt.axis('off')
 
     plt.show()
